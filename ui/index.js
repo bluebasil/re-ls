@@ -3,9 +3,19 @@ var app = null;
 
 var registered_functions = []
 var loaded_dir = {}
-var current_path = "."
 var directing_to_path = null;
 var loading = true;
+
+function initial_path() {
+  // Default current path to '.'
+  var default_path = "."
+  // Check to see if there was a privided starting path
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.has('b64path')) {
+    default_path = urlParams.get('b64path')
+  }
+  return default_path
+}
 
 function requestReturn(data) {
   console.log("Request returned.")
@@ -23,13 +33,12 @@ function handleError(data) {
 }
 
 function makeRequest(path) {
-  console.log("Makeing API request...")
   encoded = btoa(path)
   resultingUrl = 'http://127.0.0.1:5000/ls?b64path=' + encoded
-  console.log(resultingUrl)
+  console.log("Making API request: " + resultingUrl)
   directing_to_path = path
   loading = true
-  // jQuery.get(resultingUrl, "", requestReturn, "text").error(handleError)
+  // make API request
   $.ajax({
     url: resultingUrl,
     type: 'GET',
@@ -49,14 +58,6 @@ Vue.component('lsrow', {
       <td class="modified"> {{ this.row["Last Modified"] }} </td>
     </tr>
     `,
-    // template: `
-    //   <div :class="getClass" v-on:click="selected">
-    //     <span class="cell icon"> <img v-if="isDir" src="dir_icon.ico" class="dir" /> </span>
-    //     <span class="cell name"> {{ this.row.Name }} </span>
-    //     <span class="cell modified"> {{ this.row["Last Modified"] }} </span>
-    //     <span class="cell size"> {{ this.row.Size }}  </span>
-    //   </div
-    // `,
     data() {
         return {}
     },
@@ -98,17 +99,10 @@ Vue.component('lstable', {
         <lsrow v-for="r in getRows" :row="r" />
         </table>
     `,
-    // template: `
-    //   <div class="table">
-    //     <lsrow v-for="r in getRows" :row="r" />
-    //   </div>
-    // `,
     data() {
-        //console.log("data loading...")
-        //Query.get('http://127.0.0.1:5000/ls?b64path=Li4vLi4=', "", this.save_data, "text")
         console.log("Registering table")
         registered_functions.push(this.save_data)
-        makeRequest(".")
+        makeRequest(initial_path())
         return {rows:[]}
     },
     methods: {
@@ -124,45 +118,61 @@ Vue.component('lstable', {
     }
 })
 
-//
-
-Vue.component('uparrow', {
+Vue.component('buttoncomp', {
   template: `
-    <div class="upArrow" v-on:click="goUpDir">
-    <div ><img src="up_dir.png" v-on:click="this.goUpDir" class="upArrow" /></div>
-    <div class="upText"><span>Up Directory</span></div>
+    <div class="upArrow" v-on:click="callback">
+      <div ><img :src="img" class="upArrow" /></div>
+      <div class="upText"><span>{{ text }}</span></div>
     </div>
   `,
+  props: {
+    callback: {
+      required: true
+    },
+    text: {
+      type: String,
+      required: true
+    },
+    img: {
+      type: String
+    }
+  }
+})
+
+Vue.component('lshead', {
+  template: `
+    <div>
+      <input type="text" id="searchbox" class="searchbox" @keyup.enter="goTo" @keyup="checkDiff">
+      <buttoncomp :callback="goUpDir" text="Up Directory" img="up_dir.png" />
+      <buttoncomp :callback="goTo" text="Go to Path" img="dir_icon.png" v-if="diff" />
+    </div>
+  `,
+  data() {
+    console.log("Registering searchbox")
+    registered_functions.push(this.save_data)
+    return {originalPath:"",
+            diff: false}
+  },
   methods: {
     goUpDir: function() {
-      console.log(loaded_dir)
       upDir = loaded_dir["path"]
-      console.log(upDir)
 
       if (upDir.substr(upDir.length - 1) != "/") {
         upDir += "/"
       }
       upDir += ".."
       makeRequest(upDir)
-    }
-  }
-})
-
-Vue.component('searchbox', {
-  template: `
-    <div>
-      <input type="text" :value="getPath" class="searchbox">
-
-    </div>
-  `,
-  data() {
-    console.log("Registering searchbox")
-    registered_functions.push(this.save_data)
-    return {path:""}
-  },
-  methods: {
+    },
     save_data: function(data) {
-      this.path = data.path
+      this.originalPath = data.path
+      document.getElementById("searchbox").value = this.originalPath
+      this.checkDiff()
+    },
+    goTo: function() {
+      makeRequest(document.getElementById("searchbox").value)
+    },
+    checkDiff: function() {
+      this.diff = (this.originalPath != document.getElementById("searchbox").value)
     }
   },
   computed: {
@@ -176,8 +186,7 @@ Vue.component('searchbox', {
 Vue.component('dirpage', {
   template: `
     <div>
-    <searchbox />
-    <uparrow />
+    <lshead />
 
     <lstable />
     </div>

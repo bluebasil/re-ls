@@ -13,16 +13,17 @@ def call_ls():
     b64_encoded_path = request.args.get('b64path')
     str_sort_descending = request.args.get('desc','true')
     sort_by = request.args.get('srt',SIZE)
-    str_raw_format = request.args.get('raw',"false")
 
     # path should be b64 encoded.  This decodes that into a String
     decoded_path = base64.b64decode(b64_encoded_path).decode()
     sort_descending = bool(strtobool(str_sort_descending))
-    human_readable = not bool(strtobool(str_raw_format))
     try:
-        data_content = ls(decoded_path, sort_by=sort_by, desc=sort_descending, readable=human_readable)
+        lsc = LsCompute()
+        data_content = lsc.ls(decoded_path, sort_by=sort_by, desc=sort_descending)
     except PermissionError:
         abort(403, "Access Denied")
+    except FileNotFoundError:
+        abort(404, "Directory Not Found")
     return json.dumps(data_content)
 
 @app.route('/ui/<path>')

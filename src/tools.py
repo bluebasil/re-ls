@@ -61,6 +61,9 @@ class LsCompute:
         self.initialized = False
         self.payload[DONE] = False
 
+    def setDone(self):
+        self.payload[DONE] = True
+
     def _record_item(self, root_dict, path):
         """ Add the size of the record at 'path' to both the total size and the
             the size of the record in root_dict """
@@ -106,7 +109,7 @@ class LsCompute:
         if self.thread_count == 0 and self.initialized:
             logger.debug(f"Finished in recurse for {path}")
             logger.trace(self.payload)
-            self.payload[DONE] = True
+            self.setDone()
 
     def _sort(self):
         """ Sorts the payload contents by the sort_by param """
@@ -204,7 +207,7 @@ class LsCompute:
         self.initialized = True
         if self.thread_count == 0 or not recursive:
             logger.debug("Finished in ls function")
-            self.payload[DONE] = True
+            self.setDone()
 
         # Return the inital payload.  Other threads are still working
         return self.payload
@@ -223,6 +226,12 @@ class LsCompute:
         table_content = [[r[NAME],r[SIZE],r[LAST_MODIFIED]] for r in self.payload[CONTENTS]]
         table_string = tabulate(table_content, headers=[NAME, SIZE, LAST_MODIFIED])
         return table_string
+
+    def _load_table_to_reprint(self, reprint_list):
+        """ formats the tabulate table for the reprint module """
+        split_table = self._get_output_table().split("\n")
+        for i, row in enumerate(split_table):
+            reprint_list[i] = row
 
     def print_output(self):
         """
@@ -246,9 +255,7 @@ class LsCompute:
             inital = True
             while inital or not self.payload[DONE]:
                 inital = False
-                split_table = self._get_output_table().split("\n")
-                for i, row in enumerate(split_table):
-                    output_lines[i] = row
+                self._load_table_to_reprint(output_lines)
                 tail = "Loading" + "."*(tick%4)
                 output_lines[table_size] = f"Count: {self.payload[COUNT]} Size: {self.payload[SIZE]} - {tail}"
 
@@ -262,9 +269,7 @@ class LsCompute:
 
             # print out the final offical version of the table
             self._sort()
-            split_table = self._get_output_table().split("\n")
-            for i, row in enumerate(split_table):
-                output_lines[i] = row
+            self._load_table_to_reprint(output_lines)
             output_lines[table_size] = f"Count: {self.payload[COUNT]} Size: {self.payload[SIZE]} - Done."
 
     def quick_print_output(self):

@@ -46,24 +46,31 @@ tr.dir:hover {
   width: auto;
 }
 
-img.upArrow {
+img.button {
   height:40px;
 }
-div.upArrow {
+div.button {
   border: 2px solid #d8d4ea;
   border-radius: 2px;
-
-  width: 200px;
-  float: left;
-  padding: 5px;
-  margin:10px;
   user-select: none;
+  width: 200px;
+    float: left;
 }
-div.upArrow:hover {
+div.button:hover {
   background:  #d8d4ea;
   cursor: pointer;
 }
-div.upArrow div {
+
+div.generalData {
+  float: right;
+}
+
+div.button, div.generalData {
+
+  padding: 5px;
+  margin:10px;
+}
+div.button div, div.generalData div {
   float:left;
   width: auto;
   margin: auto;
@@ -72,7 +79,6 @@ div.upArrow div {
   height: 50px;
   padding: 0 10px 0 10px;
 }
-
 
 .searchbox {
   border: 1px solid #d8d4d8;

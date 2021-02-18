@@ -6,14 +6,17 @@ import base64
 import json
 import os
 
-# Assumption: It is okay to only allow a single active requestReturn
-# I am going to limit active requests witht he UI for performnce.
-# This could be reqplaced with a datastore to allow simultanious requests
-active_lsc = None
-print("FDHJKLFHSDJKFHSDJKFHK", flush=True)
-
-# Singleton
 class ActiveRequest:
+    """
+    A singleton to store the active request/LsCompute Object
+
+    Assumption: It is okay to only allow a single active requestReturn
+    I am going to limit active requests witht he UI for performnce.
+    This could be reqplaced with a datastore to allow simultanious requests.
+
+    This singleton is probably overengineered for it's purpose
+    TODO: make a simpler solution to store the activeRequest
+    """
     __instance = None
 
     @staticmethod
@@ -35,10 +38,19 @@ class ActiveRequest:
     def set(self, lsc):
         self.active_lsc = lsc
 
+# Flask Server code starts here
 app = Flask(__name__)
 
 @app.route('/ls')
 def call_ls():
+    """
+    This is the API call that is used to communicate with the Server
+
+    URL parameters:
+    b64path - a base 64 encoded string the represents the path to compute
+    desc - boolean representing return results should be sorted in decending order (Default: true)
+    sort_by - String, on of `Size`, `Name`, `Last Modified` - represents the column to sort by (Default: Size)
+    """
     # If there has been a previus call, abort it to save on performance
     if ActiveRequest.getInstance().get() is not None:
         ActiveRequest.getInstance().get().setDone()
@@ -52,18 +64,25 @@ def call_ls():
     decoded_path = base64.b64decode(b64_encoded_path).decode()
     sort_descending = bool(strtobool(str_sort_descending))
     try:
-        active_lsc = LsCompute()
-        data_content = active_lsc.ls(decoded_path, sort_by=sort_by, desc=sort_descending)
+        active_lsc = LsCompute(decoded_path, sort_by=sort_by, desc=sort_descending)
+        # inital ping to get inital table, including all files, but maybe not true folder size
+        data_content = active_lsc.ping_output()
+        # store the new active lsc instance
         ActiveRequest.getInstance().set(active_lsc)
     except PermissionError:
         abort(403, "Access Denied")
     except FileNotFoundError:
         abort(404, "Directory Not Found")
+    # return the inital json object
     return json.dumps(data_content)
 
 
 @app.route('/ping')
 def request_update():
+    """
+    Pings the active request to get an updated status of the payload
+    This was directory size calculations can be done offline
+    """
     # TODO: better protections here for is ls has not already been called
     if ActiveRequest.getInstance().get() is None:
         msg = "/ls must be called first"
@@ -71,7 +90,6 @@ def request_update():
         return {"ErrorMessage": msg}
 
     data_content = ActiveRequest.getInstance().get().ping_output()
-    logger.debug(data_content)
     return json.dumps(data_content)
 
 
@@ -87,6 +105,7 @@ def favicon():
 
 @app.route('/')
 def root():
+    """ Redirect root to index """
     return redirect(url_for("show_ui",path="index.html"),code=302)
 
 if __name__ == "__main__":

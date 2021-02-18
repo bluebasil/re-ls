@@ -275,6 +275,10 @@ Vue.component('lshead', {
   }
 })
 
+/**
+ * dirpage - Vue components
+ * Just for organizing the root components
+ */
 Vue.component('dirpage', {
   template: `
     <div>

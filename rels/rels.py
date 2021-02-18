@@ -3,6 +3,7 @@ import webbrowser
 from server import app
 from tools import *
 import base64
+from loguru import logger
 
 
 parser = argparse.ArgumentParser(prog='Re-ls',
@@ -20,9 +21,10 @@ if args.serve:
     webbrowser.open(f"http://127.0.0.1:5000/ui/index.html?b64path={b64path}")
     app.run()
 else:
+    logger.remove()
+    logger.add(sys.stderr, level="ERROR")
 
-    lsc = LsCompute()
-    lsc.ls(args.path, recursive=args.recurse)
+    lsc = LsCompute(args.path, recursive=args.recurse)
     if args.recurse:
         lsc.print_output()
     else:

@@ -35,6 +35,7 @@ def _determine_filetype(path):
 
     Return FILE, DIR, or OTHER based on the filetype of the provided path
     """
+
     if os.path.isfile(path):
         return "FILE"
     elif os.path.isdir(path):
@@ -44,13 +45,153 @@ def _determine_filetype(path):
 
 
 class LsCompute:
-    def __init__(self):
-        # self.cache = {}
-        self.sort_function = None
-        self.desc = True
-        self._clear_payload()
 
-    def _clear_payload(self):
+    # I made the __init__ to enforce the relationship of 1 request per class
+    def __init__(self, path, sort_by=SIZE, desc=True, recursive=True):
+        """
+        Return a Json compatable objet containing the contents of the given directly
+        This json will have the inital
+
+        Positional arguments:
+        path -- The directory path of which you want to list all_contents
+
+        Keyword arguments:
+        sort_by -- a String, representing the desired sort by column (Default: Size)
+        desc -- Boolean representing if the list should be sorted in descending order (Default: True)
+        recursive -- When True, starts the process of calculating the file size of folders recursivly.
+            In that case, the inital payload will still be returned, but calls to ping_output, or
+            one of the print statements should be made until calculations are done. (Default: True)
+
+
+        Returns a dict containing 'size' whihc represents the sum of the size of the direclty direct contents (not recursive),
+            'file_count' representing the number of files that are found in the directory (Does not include ohter type: Directory, Symlink, etc.)
+            and 'contents', which is a sorted list, each element being a dict with a 'name', 'size' and 'modified' field.
+        """
+        self._initialize_object()
+
+
+        abs_path = os.path.abspath(path)
+
+        # Have to get the full path of the files
+        all_contents = [os.path.join(abs_path, f) for f in os.listdir(abs_path)]
+
+        # Set some of the basic general/global stats
+        self.payload[PATH] = abs_path
+        self.payload[DONE] = False
+        self.payload[COUNT] = len(all_contents)
+
+        # Do some input validation checks
+        if sort_by not in sortable_features:
+            raise(ValueError(f"provided sort_by does not match any of {SIZE}, {LAST_MODIFIED}, or {NAME}."))
+        self.sort_by = sortable_features[sort_by]
+        self.desc = desc
+
+        for f in all_contents:
+
+            # initalizer the row and adds the row to the output payload
+            try:
+                this_row = self._initialize_row(f)
+            except Exception as e:
+                # os.stat can cause exceptions when there are permission or reading errors.  We will skip files of this nature
+                continue
+            self.payload[CONTENTS].append(this_row)
+
+            # Adds the file's size to the payload
+            self._record_item(this_row, f)
+
+            # For directories, we must recursivly calculate their size - according to intent from Sunny
+            if this_row[TYPE] == "DIR":
+                this_row[FINISHED_LOADING] = False
+                # dir_store is a dict to the coresponding row in the table - this is for access speed
+                self.dir_store[f] = this_row
+
+                # We will start the recursive calculations of folder contents size in another thread
+                if recursive:
+                    t = threading.Thread(target=self._get_full_size, args=(f,))
+                    # Keeping track of how many threads we have started is a simple way of tracking if we're done
+                    self.thread_count += 1
+                    t.start()
+
+        # the threads will record a done state if the thread count is zero
+        # AND if this point has been reached.  otherwise the first threads can set loading to false prematurly
+        # if recursive is false, we are already done
+        self.initialized = True
+        if self.thread_count == 0 or not recursive:
+            logger.debug("Finished in ls function")
+            self.setDone()
+
+
+    def setDone(self):
+        """
+        Surfaces the ability to set the done statsu to true.
+        This value is used to signify when loading is done - or used to abort loading early
+        """
+        self.payload[DONE] = True
+
+
+    def ping_output(self):
+        """
+        Simply sorts the payload at it's current state of loading
+        and returns the payload.  payload["done"] can be checked to see if loading is done
+        """
+        self._sort()
+        return self.payload
+
+
+    def quick_print_output(self):
+        """
+        Prints the results at it's current state of loading.
+        """
+        self._sort()
+        print(self._get_output_table(), flush=True)
+        print(f"Count: {self.payload[COUNT]} Size: {self.payload[SIZE]}", flush=True)
+
+
+    def print_output(self):
+        """
+        Prints the table and continues to update it, blocking while doing so
+        When all recursive size calculations are finished, it will return.
+
+        The inital table order is by inital base level calculations.
+        The table will only re-order based on sort_by and desc when all other calculations are done.
+        This is for processing efficiency on larger directories.
+
+        TODO: q to quit functionality
+        TODO: I am using the reprint library, which works exaclt how i want it to with smaller directories
+            but larger directories thatn the size of the terminal window can be a problem.
+            Additionally, preformance is a concern.  I played around with curses and manually edditing previous
+            lines with limmited success.  But ideally this library should be replaces, or possibly this functionality removed entierly.
+        """
+        self._sort()
+        inital_table = self._get_output_table().split("\n")
+        table_size = len(inital_table)
+        tick = 0
+        with  reprint.output(output_type='list', initial_len=table_size + 1) as output_lines:
+            inital = True
+            while inital or not self.payload[DONE]:
+                inital = False
+                self._load_table_to_reprint(output_lines)
+                # Just makes a plesant Loading... annimation
+                tail = "Loading" + "."*(tick%4)
+                output_lines[table_size] = f"Count: {self.payload[COUNT]} Size: {self.payload[SIZE]} - {tail}"
+
+                # TODO: this 'q to quit' functionality does not work
+                # if keyboard.is_pressed('q'):
+                #     self.payload[DONE] = True
+                #     exit()
+
+                time.sleep(1)
+                tick += 1
+
+            # print out the final offical version of the table
+            self._sort()
+            self._load_table_to_reprint(output_lines)
+            output_lines[table_size] = f"Count: {self.payload[COUNT]} Size: {self.payload[SIZE]} - Done."
+
+    """ Private Methords: """
+
+    def _initialize_object(self):
+        """ Helper function to setup inital values """
         self.payload = {PATH: "",
                         SIZE: "...",
                         COUNT: 0,
@@ -60,9 +201,25 @@ class LsCompute:
         self.thread_count = 0
         self.initialized = False
         self.payload[DONE] = False
+        self.desc = True
 
-    def setDone(self):
-        self.payload[DONE] = True
+
+    def _initialize_row(self, path):
+        """ Sets up the inital row contents.  Not all will be visible. """
+        file_stats = os.stat(path)
+
+        # Initialize row
+        return {
+            NAME: os.path.basename(path),
+            PATH: path,
+            LAST_MODIFIED: datetime.fromtimestamp(file_stats.st_mtime).strftime("%Y-%m-%d %I:%M %p"),
+            LAST_MODIFIED_TS: file_stats.st_mtime,
+            TYPE: _determine_filetype(path),
+            SIZE: "...", #Inital size and raw_size to be filled in 'record item'.
+            RAW_SIZE: 0,
+            FINISHED_LOADING: True # Default to true, only directories will have this as false
+        }
+
 
     def _record_item(self, root_dict, path):
         """ Add the size of the record at 'path' to both the total size and the
@@ -111,114 +268,13 @@ class LsCompute:
             logger.trace(self.payload)
             self.setDone()
 
+
     def _sort(self):
         """ Sorts the payload contents by the sort_by param """
         def sort_function(item):
             return item[self.sort_by]
         self.payload[CONTENTS].sort(key=sort_function, reverse=self.desc)
 
-
-    def _initialize_row(self, path):
-        """ Sets up the inital row contents.  Not all will be visible. """
-        file_stats = os.stat(path)
-
-        # Initialize row
-        return {
-            NAME: os.path.basename(path),
-            PATH: path,
-            LAST_MODIFIED: datetime.fromtimestamp(file_stats.st_mtime).strftime("%Y-%m-%d %I:%M %p"),
-            LAST_MODIFIED_TS: file_stats.st_mtime,
-            TYPE: _determine_filetype(path),
-            SIZE: "...", #Inital size and raw_size to be filled in 'record item'.
-            RAW_SIZE: 0,
-            FINISHED_LOADING: True # Default to true, only directories will have this as false
-        }
-
-
-    def ls(self, path, sort_by=SIZE, desc=True, recursive=True):
-        """
-        Return a Json compatable objet containing the contents of the given directly
-        This json will have the inital
-
-        Positional arguments:
-        path -- The directory path of whihc you want to list all_contents
-
-        Keyword arguments:
-        sort_by -- a String, representing the desired sort by column (Default: Size)
-        desc -- Boolean representing if the list should be sorted in descending order (Default: True)
-        recursive -- When True, starts the process of calculating the file size of folders recursivly.
-            In that case, the inital payload will still be returned, but calls to ping_output, or
-            one of the print statements should be made until calculations are done. (Default: True)
-
-
-        Returns a dict containing 'size' whihc represents the sum of the size of the direclty direct contents (not recursive),
-            'file_count' representing the number of files that are found in the directory (Does not include ohter type: Directory, Symlink, etc.)
-            and 'contents', which is a sorted list, each element being a dict with a 'name', 'size' and 'modified' field.
-        """
-        self._clear_payload()
-        abs_path = os.path.abspath(path)
-
-        # Have to get the full path of the files
-        all_contents = [os.path.join(abs_path, f) for f in os.listdir(abs_path)]
-
-        # Set some of the basic general/global stats
-        self.payload[PATH] = abs_path
-        self.payload[DONE] = False
-        self.payload[COUNT] = len(all_contents)
-
-        # Do some input validation checks
-        if sort_by not in sortable_features:
-            raise(ValueError(f"provided sort_by does not match any of {SIZE}, {LAST_MODIFIED}, or {NAME}."))
-        self.sort_by = sortable_features[sort_by]
-        self.desc = desc
-
-        for f in all_contents:
-
-            # initalizer the row and adds the row to the output payload
-            try:
-                this_row = self._initialize_row(f)
-            except Exception as e:
-                # os.stat can cause exceptions when there are permission or reading errors.  We will skip files of this nature
-                continue
-            self.payload[CONTENTS].append(this_row)
-
-            # Adds the file's size to the payload
-            self._record_item(this_row, f)
-
-            # For directories, we must recursivly calculate their size - according to intent from Sunny
-            if this_row[TYPE] == "DIR":
-                this_row[FINISHED_LOADING] = False
-                # dir_store is a dict to the coresponding row in the table - this is for access speed
-                self.dir_store[f] = this_row
-
-                # We will start the recursive calculations of folder contents size in another thread
-                if recursive:
-                    t = threading.Thread(target=self._get_full_size, args=(f,))
-                    # Keeping track of how many threads we have started is a simple way of tracking if we're done
-                    self.thread_count += 1
-                    t.start()
-
-        # Do an inital sort for what we will directly return
-        self._sort()
-
-        # the threads will record a done state if the thread count is zero
-        # AND if this point has been reached.  otherwise the first threads can set loading to false prematurly
-        # if recursive is false, we are already done
-        self.initialized = True
-        if self.thread_count == 0 or not recursive:
-            logger.debug("Finished in ls function")
-            self.setDone()
-
-        # Return the inital payload.  Other threads are still working
-        return self.payload
-
-    def ping_output(self):
-        """
-        Simply sorts the payload at it's current state of loading
-        and returns the payload.  payload["done"] can be checked to see if loading is done
-        """
-        self._sort()
-        return self.payload
 
     def _get_output_table(self):
         """ chooses a subset of the payload + the tabulate package to make
@@ -227,58 +283,13 @@ class LsCompute:
         table_string = tabulate(table_content, headers=[NAME, SIZE, LAST_MODIFIED])
         return table_string
 
+
     def _load_table_to_reprint(self, reprint_list):
         """ formats the tabulate table for the reprint module """
         split_table = self._get_output_table().split("\n")
         for i, row in enumerate(split_table):
             reprint_list[i] = row
 
-    def print_output(self):
-        """
-        Prints the table and continues to update it, blocking while doing so
-        When all recursive size calculations are finished, it will return.
-
-        The inital table order is by inital base level calculations.
-        The table will only re-order based on sort_by and desc when all other calculations are done.
-        This is for processing efficiency on larger directories.
-
-        TODO: q to quit functionality
-        TODO: I am using the reprint library, which works exaclt how i want it to with smaller directories
-            but larger directories thatn the size of the terminal window can be a problem.
-            Additionally, preformance is a concern.  I played around with curses and manually edditing previous
-            lines with limmited success.  But ideally this library should be replaces, or possibly this functionality removed entierly.
-        """
-        inital_table = self._get_output_table().split("\n")
-        table_size = len(inital_table)
-        tick = 0
-        with  reprint.output(output_type='list', initial_len=table_size + 1) as output_lines:
-            inital = True
-            while inital or not self.payload[DONE]:
-                inital = False
-                self._load_table_to_reprint(output_lines)
-                tail = "Loading" + "."*(tick%4)
-                output_lines[table_size] = f"Count: {self.payload[COUNT]} Size: {self.payload[SIZE]} - {tail}"
-
-                # TODO: this 'q to quit' functionality does not work
-                # if keyboard.is_pressed('q'):
-                #     self.payload[DONE] = True
-                #     exit()
-
-                time.sleep(0.1)
-                tick += 1
-
-            # print out the final offical version of the table
-            self._sort()
-            self._load_table_to_reprint(output_lines)
-            output_lines[table_size] = f"Count: {self.payload[COUNT]} Size: {self.payload[SIZE]} - Done."
-
-    def quick_print_output(self):
-        """
-        Prints the results at it's current state of loading.
-        """
-        self._sort()
-        print(self._get_output_table(), flush=True)
-        print(f"Count: {self.payload[COUNT]} Size: {self.payload[SIZE]}", flush=True)
 
 
 if __name__ == "__main__":
